@@ -1,0 +1,758 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice of Juba - News, Insight, and Analysis</title>
+    <!-- Load Tailwind CSS for speed and stability -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Lucide icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* Setting a default font */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+        /* Custom scrollbar style for the discussion feed (for dark mode) */
+        #discussion-feed {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        /* Dark mode scrollbar styles */
+        .dark #discussion-feed::-webkit-scrollbar {
+            width: 6px;
+        }
+        .dark #discussion-feed::-webkit-scrollbar-thumb {
+            background-color: #E74C3C; /* Brand Red */
+            border-radius: 3px;
+        }
+        .dark #discussion-feed::-webkit-scrollbar-track {
+            background: #374151; /* Dark gray track */
+        }
+    </style>
+    <script type="module">
+        // --- Theme Toggle Logic ---
+        const htmlElement = document.documentElement;
+
+        function updateTheme(theme) {
+            const themeToggleBtn = document.getElementById('theme-toggle');
+            const label = document.getElementById('current-theme-label');
+
+            if (theme === 'dark') {
+                htmlElement.classList.add('dark');
+                localStorage.setItem('theme', 'dark');
+            } else {
+                htmlElement.classList.remove('dark');
+                localStorage.setItem('theme', 'light');
+            }
+            
+            // Update the icon
+            if (themeToggleBtn) {
+                const icon = themeToggleBtn.querySelector('i');
+                if (icon) {
+                    icon.setAttribute('data-lucide', theme === 'dark' ? 'sun' : 'moon');
+                    lucide.createIcons();
+                }
+            }
+
+            // Update the text label
+            if (label) {
+                label.textContent = theme === 'dark' ? 'Dark Mode' : 'Light Mode';
+            }
+        }
+
+        window.toggleTheme = function() {
+            const currentTheme = localStorage.getItem('theme') === 'dark' ? 'dark' : 'light';
+            updateTheme(currentTheme === 'dark' ? 'light' : 'dark');
+        }
+
+        // Initialize theme on load
+        function initTheme() {
+            const savedTheme = localStorage.getItem('theme');
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            
+            if (savedTheme) {
+                updateTheme(savedTheme);
+            } else if (prefersDark) {
+                updateTheme('dark');
+            } else {
+                updateTheme('light');
+            }
+        }
+
+        // --- Firebase Imports ---
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, query, onSnapshot, serverTimestamp, setLogLevel, doc, limit, orderBy } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables provided by the Canvas environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app, db, auth;
+        let currentUserId = 'initializing...';
+
+        // Set log level for debugging
+        setLogLevel('debug');
+
+        // Function to create a placeholder image URL using the brand red
+        window.getPlaceholderUrl = function (width, height, text) {
+            return `https://placehold.co/${width}x{height}/E74C3C/ffffff?text=${text}`;
+        }
+
+        // --- Donation Modal Functions ---
+        const donationModal = document.getElementById('donationModal');
+
+        window.openDonateModal = function() {
+            const modal = document.getElementById('donationModal');
+            if (modal) {
+                modal.classList.remove('hidden');
+                modal.classList.add('flex');
+            }
+        }
+
+        window.hideModal = function() {
+            const modal = document.getElementById('donationModal');
+            if (modal) {
+                modal.classList.add('hidden');
+                modal.classList.remove('flex');
+            }
+        };
+
+        window.copyToClipboard = function(text, buttonElement) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            document.body.appendChild(textarea);
+            textarea.select();
+            
+            const statusMessage = document.getElementById('statusMessage');
+
+            try {
+                document.execCommand('copy');
+                statusMessage.textContent = 'Momo number copied!';
+                statusMessage.className = 'p-3 text-white text-center rounded-b-xl transition duration-300 bg-green-500 dark:bg-green-700';
+                buttonElement.textContent = 'Copied!';
+                setTimeout(() => {
+                    statusMessage.className = 'hidden p-3 text-white text-center rounded-b-xl transition duration-300';
+                    buttonElement.textContent = 'Copy Number';
+                }, 2000);
+            } catch (err) {
+                console.error('Failed to copy text: ', err);
+                statusMessage.textContent = 'Failed to copy, please copy manually.';
+                statusMessage.className = 'p-3 text-white text-center rounded-b-xl transition duration-300 bg-red-500 dark:bg-red-900';
+                setTimeout(() => {
+                    statusMessage.className = 'hidden p-3 text-white text-center rounded-b-xl transition duration-300';
+                }, 3000);
+            } finally {
+                document.body.removeChild(textarea);
+            }
+        };
+        // --- End Donation Modal Functions ---
+
+
+        // Simple mobile menu toggle logic
+        document.addEventListener('DOMContentLoaded', () => {
+            initTheme(); // Initialize theme first
+            lucide.createIcons(); // Initialize Lucide icons
+
+            // Event listeners
+            document.getElementById('menu-button').addEventListener('click', () => {
+                document.getElementById('mobile-menu').classList.toggle('hidden');
+            });
+            document.getElementById('theme-toggle').addEventListener('click', window.toggleTheme);
+            document.getElementById('closeModalButton').addEventListener('click', window.hideModal);
+            if (donationModal) {
+                 donationModal.addEventListener('click', (e) => {
+                    if (e.target === donationModal) {
+                        window.hideModal();
+                    }
+                });
+            }
+
+            // Start Firebase setup
+            setupFirebase();
+        });
+
+        // --- Firebase Setup and Authentication ---
+        async function setupFirebase() {
+            try {
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                onAuthStateChanged(auth, (user) => {
+                    if (user) {
+                        currentUserId = user.uid;
+                        document.getElementById('user-id-display').textContent = `User: ${currentUserId.substring(0, 8)}...`;
+
+                        // Start listening for all data streams
+                        loadPosts();
+                        loadMainArticles(); 
+                    } else {
+                        currentUserId = 'anonymous-' + crypto.randomUUID().substring(0, 8);
+                        document.getElementById('user-id-display').textContent = `User: ${currentUserId}`;
+                        signInAnonymously(auth).catch((error) => console.error("Anonymous Sign-in failed:", error));
+                    }
+                });
+
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
+                }
+            } catch (error) {
+                console.error("Firebase Initialization Error:", error);
+            }
+        }
+        
+        // --- Dynamic Content Logic (Read-Only) ---
+        function loadMainArticles() {
+            if (!db) return;
+
+            const articlesPath = `/artifacts/${appId}/public/data/main_articles`;
+            const articlesCollection = collection(db, articlesPath);
+            
+            // Listen for all articles in the collection
+            const q = query(articlesCollection);
+
+            onSnapshot(q, (snapshot) => {
+                const allArticles = [];
+                
+                snapshot.forEach((doc) => {
+                    const article = { ...doc.data(), id: doc.id };
+                    allArticles.push(article);
+                });
+
+                renderMainArticles(allArticles);
+            }, (error) => {
+                console.error("Error loading main articles:", error);
+            });
+        }
+        
+        function renderMainArticles(articles) {
+            // 1. Find Hero Article (limit to one 'hero' section article)
+            const heroArticle = articles.find(a => a.section === 'hero');
+            const heroElement = document.getElementById('hero-story-container');
+            heroElement.innerHTML = ''; // Clear existing content
+
+            if (heroArticle) {
+                const articleHtml = `
+                    <img class="w-full h-56 md:h-96 object-cover" 
+                         src="${heroArticle.image_url || window.getPlaceholderUrl(1200, 600, heroArticle.category.toUpperCase())}" 
+                         alt="${heroArticle.title}" 
+                         onerror="this.onerror=null;this.src=window.getPlaceholderUrl(1200, 600, '${heroArticle.category.toUpperCase()}');">
+                    <div class="p-4 md:p-6">
+                        <span class="inline-block bg-brand-red text-white text-xs font-semibold px-3 py-1 rounded-full mb-2 uppercase shadow-md">${heroArticle.category}</span>
+                        <h2 class="text-2xl md:text-3xl font-extrabold text-gray-900 leading-tight mb-3 dark:text-gray-100">
+                            ${heroArticle.title}
+                        </h2>
+                        <p class="text-gray-600 mb-4 dark:text-gray-300">
+                            ${heroArticle.summary}
+                        </p>
+                        <a href="#" class="text-brand-red font-bold hover:underline transition duration-150 flex items-center">
+                            Read Full Story 
+                            <i data-lucide="arrow-right" class="w-4 h-4 ml-1"></i>
+                        </a>
+                    </div>
+                `;
+                heroElement.innerHTML = articleHtml;
+                lucide.createIcons(); // Re-render lucide icons in new HTML
+            } else {
+                 heroElement.innerHTML = `<div class="p-6 text-center text-gray-500 dark:text-gray-400">No featured hero story published yet.</div>`;
+            }
+
+            // 2. Find Finance Articles (limit to 3 'finance' section articles)
+            const financeArticles = articles
+                .filter(a => a.section === 'finance')
+                .sort((a, b) => b.timestamp?.seconds - a.timestamp?.seconds)
+                .slice(0, 3);
+
+            const financeListElement = document.getElementById('finance-list');
+            financeListElement.innerHTML = '';
+
+            if (financeArticles.length > 0) {
+                financeArticles.forEach(article => {
+                    const dateDisplay = article.timestamp ? new Date(article.timestamp.seconds * 1000).toLocaleDateString() : 'Just now';
+                    financeListElement.innerHTML += `
+                        <li class="p-3 bg-white rounded-lg shadow-sm hover:shadow-md transition duration-200 border-l-4 border-highlight-orange dark:bg-gray-800">
+                            <a href="#" class="text-gray-800 font-semibold hover:text-brand-red cursor-pointer block dark:text-gray-200">
+                                ${article.title}
+                            </a>
+                            <p class="text-xs text-gray-500 mt-1 dark:text-gray-400">${article.category} | ${dateDisplay}</p>
+                        </li>
+                    `;
+                });
+            } else {
+                financeListElement.innerHTML = `<li class="p-3 text-gray-500 dark:text-gray-400 text-sm">No finance articles published.</li>`;
+            }
+        }
+        
+        // --- Discussion Board Logic ---
+        function loadPosts() {
+            if (!db) return;
+
+            const discussionPath = `/artifacts/${appId}/public/data/discussion_posts`;
+            const postsCollection = collection(db, discussionPath);
+            
+            // Query: Get posts and order by timestamp (descending for latest first)
+            const q = query(postsCollection, orderBy('timestamp', 'desc'), limit(20)); // Limit to last 20 posts
+
+            onSnapshot(q, (snapshot) => {
+                const feedElement = document.getElementById('discussion-feed');
+                if (!feedElement) return;
+
+                const posts = [];
+                snapshot.forEach((doc) => posts.push(doc.data()));
+                
+                // Clear existing feed
+                feedElement.innerHTML = '';
+                
+                if (posts.length === 0) {
+                    feedElement.innerHTML = '<p class="text-gray-500 dark:text-gray-400 text-sm italic p-4 text-center">Be the first to comment!</p>';
+                    return;
+                }
+
+                // Reverse the array to display chronologically in the box (oldest on top, newest at bottom)
+                posts.reverse().forEach((post) => {
+                    const postElement = createPostElement(post);
+                    feedElement.appendChild(postElement);
+                });
+
+                // Scroll to the newest post (bottom of the feed)
+                feedElement.scrollTop = feedElement.scrollHeight;
+            }, (error) => {
+                console.error("Error listening to discussion posts:", error);
+            });
+        }
+
+        function createPostElement(post) {
+            const date = post.timestamp ? new Date(post.timestamp.seconds * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : 'Now';
+            const userDisplay = post.userId ? post.userId.substring(0, 8) + '...' : 'Unknown';
+
+            const div = document.createElement('div');
+            div.className = 'p-3 bg-white border-b border-gray-200 last:border-b-0 rounded-lg shadow-sm dark:bg-gray-700 dark:border-gray-600';
+            div.innerHTML = `
+                <p class="text-gray-800 text-sm break-words dark:text-gray-200">${post.content}</p>
+                <p class="text-xs mt-1 text-gray-500 dark:text-gray-400">
+                    <span class="font-bold text-brand-red">${userDisplay}</span> 
+                    <span class="ml-2">${date}</span>
+                </p>
+            `;
+            return div;
+        }
+
+        window.submitPost = async function (event) {
+            event.preventDefault();
+            
+            const contentInput = document.getElementById('post-content');
+            const content = contentInput.value.trim();
+
+            if (!content || !auth.currentUser || !db) return;
+            
+            const submitButton = document.getElementById('submit-post-btn');
+            submitButton.disabled = true;
+            submitButton.textContent = 'Posting...';
+
+            try {
+                const discussionPath = `/artifacts/${appId}/public/data/discussion_posts`;
+                const postsCollection = collection(db, discussionPath);
+                
+                await addDoc(postsCollection, {
+                    userId: auth.currentUser.uid,
+                    content: content,
+                    timestamp: serverTimestamp()
+                });
+
+                contentInput.value = ''; // Clear input on success
+            } catch (error) {
+                console.error("Error submitting post:", error);
+            } finally {
+                submitButton.disabled = false;
+                submitButton.textContent = 'Post Comment';
+            }
+        }
+    </script>
+</head>
+<!-- Body now supports both themes -->
+<body class="antialiased bg-gray-100 text-gray-900 transition-colors duration-300 dark:bg-gray-900 dark:text-gray-100">
+
+    <!-- Tailwind Config updated to reflect theme colors -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'brand-red': '#E74C3C', 
+                        'brand-dark': '#2C3E50', 
+                        'highlight-orange': '#F39C12', 
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+
+    <!-- Header & Navigation -->
+    <header class="bg-white shadow-lg sticky top-0 z-50 transition-colors duration-300 dark:bg-gray-800">
+        <div class="container mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-20">
+                <!-- Logo/Site Name - Text adapts -->
+                <div class="flex-shrink-0 flex items-center">
+                    <!-- Logo Icon -->
+                    <svg class="w-8 h-8 mr-2 text-brand-red" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="4" y="14" width="2" height="4" rx="1" />
+                        <rect x="7" y="12" width="2" height="8" rx="1" />
+                        <rect x="10" y="10" width="2" height="12" rx="1" />
+                        <rect x="13" y="8" width="2" height="16" rx="1" />
+                        <rect x="16" y="10" width="2" height="12" rx="1" />
+                        <rect x="19" y="12" width="2" height="8" rx="1" />
+                    </svg>
+                    <!-- Site Name: Voice Of (Red), Juba (Dark/Light adapts) -->
+                    <a href="#" class="text-2xl font-bold text-gray-900 dark:text-gray-100">
+                        <span class="text-brand-red">Voice Of</span> Juba
+                    </a>
+                </div>
+
+                <!-- Desktop Navigation -->
+                <nav class="hidden lg:block">
+                    <ul class="flex space-x-5 text-xl">
+                        <li><a href="#" class="text-gray-600 hover:text-brand-red transition duration-150 font-extrabold dark:text-gray-200">News</a></li>
+                        <li><a href="#" class="text-gray-600 hover:text-brand-red transition duration-150 font-extrabold dark:text-gray-200">Shamarat</a></li>
+                        <li><a href="#" class="text-gray-600 hover:text-brand-red transition duration-150 font-extrabold dark:text-gray-200">Entertainment</a></li>
+                        <li><a href="#" class="text-gray-600 hover:text-brand-red transition duration-150 font-extrabold dark:text-gray-200">Sports</a></li>
+                        <li><a href="#" class="text-gray-600 hover:text-brand-red transition duration-150 font-extrabold dark:text-gray-200">Politics</a></li>
+                        <li><a href="#" class="text-gray-600 hover:text-brand-red transition duration-150 font-extrabold dark:text-gray-200">Opinions</a></li>
+                        <li><a href="#" class="text-gray-600 hover:text-brand-red transition duration-150 font-extrabold dark:text-gray-200">Spotlight</a></li>
+                    </ul>
+                </nav>
+                
+                <!-- Search Icon & Mobile Menu Button -->
+                <div class="flex items-center space-x-4">
+                    <!-- Search Icon -->
+                    <button class="text-gray-500 hover:text-brand-red transition duration-150 p-2 rounded-full hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700">
+                        <i data-lucide="search" class="w-6 h-6"></i>
+                    </button>
+
+                    <!-- Mobile Menu Button -->
+                    <button id="menu-button" class="lg:hidden text-gray-500 hover:text-brand-red transition duration-150 p-2 rounded-lg hover:bg-gray-200 dark:text-gray-400 dark:hover:bg-gray-700">
+                        <i data-lucide="menu" class="w-6 h-6"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Mobile Menu -->
+        <div id="mobile-menu" class="lg:hidden hidden bg-white border-t border-gray-200 dark:bg-gray-800 dark:border-gray-700">
+            <ul class="flex flex-col p-4 space-y-2">
+                <li><a href="#" class="block p-2 text-gray-800 hover:bg-gray-100 rounded-md text-xl font-bold dark:text-gray-200 dark:hover:bg-gray-700">News</a></li>
+                <li><a href="#" class="block p-2 text-gray-800 hover:bg-gray-100 rounded-md text-xl font-bold dark:text-gray-200 dark:hover:bg-gray-700">Shamarat</a></li>
+                <li><a href="#" class="block p-2 text-gray-800 hover:bg-gray-100 rounded-md text-xl font-bold dark:text-gray-200 dark:hover:bg-gray-700">Entertainment</a></li>
+                <li><a href="#" class="block p-2 text-gray-800 hover:bg-gray-100 rounded-md text-xl font-bold dark:text-gray-200 dark:hover:bg-gray-700">Sports</a></li>
+                <li><a href="#" class="block p-2 text-gray-800 hover:bg-gray-100 rounded-md text-xl font-bold dark:text-gray-200 dark:hover:bg-gray-700">Politics</a></li>
+                <li><a href="#" class="block p-2 text-gray-800 hover:bg-gray-100 rounded-md text-xl font-bold dark:text-gray-200 dark:hover:bg-gray-700">Opinions</a></li>
+                <li><a href="#" class="block p-2 text-gray-800 hover:bg-gray-100 rounded-md text-xl font-bold dark:text-gray-200 dark:hover:bg-gray-700">Spotlight</a></li>
+            </ul>
+        </div>
+    </header>
+    
+    <!-- Breaking News Ticker -->
+    <div class="bg-brand-dark text-white py-2 px-4 shadow-inner">
+        <div class="container mx-auto flex flex-wrap items-center text-sm">
+            <span class="font-bold mr-3 bg-brand-red px-2 py-0.5 rounded-full text-xs uppercase shadow-md">Breaking:</span>
+            <p class="truncate flex-1">
+                Major infrastructural project announced for Juba suburbs; funding secured through international partnership.
+            </p>
+        </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <main class="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            
+            <!-- Left Column (Main News - Dynamic Content) -->
+            <section class="lg:col-span-2 space-y-8">
+                
+                <!-- 1. Featured Hero Story (DYNAMICALLY LOADED) -->
+                <article id="hero-story-container" class="bg-white rounded-xl shadow-xl overflow-hidden transform transition duration-300 dark:bg-gray-800">
+                    <div class="p-6 text-center text-gray-500 dark:text-gray-400">Loading featured story...</div>
+                </article>
+
+                <!-- 2. Finance News Section (DYNAMICALLY LOADED) -->
+                <div class="space-y-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <h2 class="text-2xl font-bold text-gray-900 border-l-4 border-highlight-orange pl-3 dark:text-gray-100">Finance & Economy</h2>
+                    <ul id="finance-list" class="space-y-3">
+                        <!-- Finance articles will be inserted here by JavaScript -->
+                        <li class="p-3 text-gray-500 dark:text-gray-400 text-sm">Loading finance articles...</li>
+                    </ul>
+                </div>
+                
+                <!-- 3. Mid-Grid News (HARDCODED for demonstration) -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- News Item 1 (NEWS) -->
+                    <article class="bg-white rounded-xl shadow-md overflow-hidden dark:bg-gray-800">
+                        <img class="w-full h-40 object-cover" 
+                             src="https://placehold.co/600x300/2C3E50/ffffff?text=LATEST+NEWS" 
+                             alt="Latest News Image" 
+                             onerror="this.onerror=null;this.src=getPlaceholderUrl(600, 300, 'Latest News');">
+                        <div class="p-4">
+                            <span class="inline-block text-xs font-bold text-gray-600 mb-1 uppercase dark:text-gray-300">News</span>
+                            <h3 class="text-lg font-bold text-gray-900 hover:text-brand-red cursor-pointer dark:text-gray-100">
+                                Border Patrol Strengthened Following Regional Consultations
+                            </h3>
+                            <p class="text-sm text-gray-500 mt-1 dark:text-gray-400">2 hours ago</p>
+                        </div>
+                    </article>
+                    <!-- News Item 2 (SPORTS) -->
+                    <article class="bg-white rounded-xl shadow-md overflow-hidden dark:bg-gray-800">
+                        <img class="w-full h-40 object-cover" 
+                             src="https://placehold.co/600x300/E74C3C/ffffff?text=SPORTS+HIGHLIGHT" 
+                             alt="Sports Highlight Image" 
+                             onerror="this.onerror=null;this.src=getPlaceholderUrl(600, 300, 'Sports Highlight');">
+                        <div class="p-4">
+                            <span class="inline-block text-xs font-bold text-brand-red mb-1 uppercase">Sports</span>
+                            <h3 class="text-lg font-bold text-gray-900 hover:text-brand-red cursor-pointer dark:text-gray-100">
+                                Juba FC Secures Top Seed Spot After Thrilling Match
+                            </h3>
+                            <p class="text-sm text-gray-500 mt-1 dark:text-gray-400">Today</p>
+                        </div>
+                    </article>
+                </div>
+                
+                <!-- 4. Shamarat & Spotlight Section (HARDCODED for demonstration) -->
+                <div class="space-y-4">
+                    <h2 class="text-2xl font-bold text-gray-900 border-l-4 border-brand-red pl-3 dark:text-gray-100">Shamarat & Spotlight</h2>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                        <!-- Shamarat Item 1 -->
+                        <article class="flex bg-white rounded-xl shadow-md p-4 items-start border-l-4 border-highlight-orange dark:bg-gray-800">
+                            <i data-lucide="speech" class="w-6 h-6 text-brand-red flex-shrink-0 mr-3 mt-1"></i>
+                            <div>
+                                <span class="text-xs font-semibold text-brand-red uppercase">Shamarat</span>
+                                <h4 class="text-md font-semibold text-gray-900 hover:text-brand-red cursor-pointer dark:text-gray-100">
+                                    Why the Viral 'Juba Dance Challenge' Is Taking Over TikTok
+                                </h4>
+                                <p class="text-sm text-gray-500 mt-1 dark:text-gray-400">Trending light news and buzz.</p>
+                            </div>
+                        </article>
+                        <!-- Spotlight Item 1 -->
+                        <article class="flex bg-white rounded-xl shadow-md p-4 items-start border-l-4 border-brand-dark dark:bg-gray-800">
+                             <i data-lucide="star" class="w-6 h-6 text-brand-dark flex-shrink-0 mr-3 mt-1 dark:text-gray-300"></i>
+                            <div>
+                                <span class="text-xs font-semibold text-brand-dark uppercase dark:text-gray-300">Spotlight</span>
+                                <h4 class="text-md font-semibold text-gray-900 hover:text-brand-red cursor-pointer dark:text-gray-100">
+                                    Meet the Juba Tech Entrepreneur Revolutionizing Agriculture
+                                </h4>
+                                <p class="text-sm text-gray-500 mt-1 dark:text-gray-400">Exclusive personality feature.</p>
+                            </div>
+                        </article>
+                    </div>
+                </div>
+
+            </section>
+            
+            <!-- Right Column (Sidebar) -->
+            <aside class="space-y-8">
+                
+                <!-- 6. LIVE COMMUNITY DISCUSSION BOARD -->
+                <div class="bg-white p-6 rounded-xl shadow-2xl border-t-4 border-brand-red dark:bg-gray-800">
+                    <h3 class="text-xl font-bold text-gray-900 mb-2 flex items-center dark:text-gray-100">
+                        <span class="w-3 h-3 bg-brand-red rounded-full mr-2 animate-pulse"></span>
+                        Live Discussion Board
+                    </h3>
+                    <p id="user-id-display" class="text-xs text-gray-500 mb-4 truncate dark:text-gray-400">User: Initializing...</p>
+                    
+                    <!-- Post Input Form -->
+                    <form onsubmit="submitPost(event)" class="mb-4 space-y-2">
+                        <textarea id="post-content" required maxlength="150" placeholder="Join the conversation (max 150 chars)..." 
+                                  class="w-full p-2 border border-gray-300 bg-white text-gray-900 rounded-lg text-sm 
+                                         focus:ring-brand-red focus:border-brand-red resize-none
+                                         dark:bg-gray-700 dark:text-gray-100 dark:border-gray-600"></textarea>
+                        <button type="submit" id="submit-post-btn" class="w-full bg-brand-red text-white font-bold py-2 rounded-lg hover:bg-brand-dark transition duration-200">
+                            Post Comment
+                        </button>
+                    </form>
+
+                    <!-- Discussion Feed -->
+                    <div id="discussion-feed" class="space-y-2 border border-gray-300 p-2 bg-gray-100 rounded-lg dark:border-gray-700 dark:bg-gray-700">
+                        <p class="text-gray-500 text-sm italic p-4 text-center dark:text-gray-400">Loading posts...</p>
+                    </div>
+                </div>
+                
+                <!-- Ad Placeholder -->
+                <div class="bg-gray-200 p-8 text-center rounded-xl shadow-inner border border-gray-300 dark:bg-gray-700 dark:border-gray-600">
+                    <p class="text-gray-700 font-bold dark:text-gray-300">ADVERTISEMENT</p>
+                    <p class="text-xs text-gray-500 mt-1 dark:text-gray-400">Support Local Journalism</p>
+                </div>
+                
+                <!-- 7. Theme Switcher Widget -->
+                <div class="bg-white p-6 rounded-xl shadow-lg dark:bg-gray-800">
+                    <h3 class="text-xl font-bold text-gray-900 mb-4 border-b border-gray-200 pb-2 dark:text-gray-100 dark:border-gray-700">Display Theme</h3>
+                    <div class="flex items-center justify-between">
+                        <!-- Label will be updated by JS (Light Mode or Dark Mode) -->
+                        <span id="current-theme-label" class="text-lg font-semibold text-gray-700 dark:text-gray-300">Loading...</span>
+                        
+                        <!-- Theme Toggle Button - Reusing ID for JS logic -->
+                        <button id="theme-toggle" 
+                                class="flex items-center justify-center w-12 h-12 rounded-full text-white bg-brand-dark hover:bg-brand-red transition duration-200 shadow-lg dark:bg-gray-700 dark:hover:bg-brand-red">
+                            <i data-lucide="sun" class="w-6 h-6"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Donation/Support Widget -->
+                <div class="bg-brand-red p-6 rounded-xl shadow-2xl text-white">
+                    <h3 class="text-2xl font-extrabold mb-3 text-white">Support Our Work</h3>
+                    <p class="text-sm mb-4 opacity-90">Help us continue delivering reliable, independent news and analysis by making a small contribution today.</p>
+                    <button id="donateButton" 
+                            onclick="openDonateModal()"
+                            class="w-full bg-brand-dark text-white font-bold py-3 rounded-lg hover:bg-highlight-orange transition duration-200 shadow-xl transform hover:scale-[1.02]">
+                        Donate Now
+                    </button>
+                </div>
+            </aside>
+        </div>
+        
+    </main>
+
+    <!-- Donation Modal -->
+    <div id="donationModal"
+         class="fixed inset-0 bg-gray-900 bg-opacity-75 z-50 hidden transition-opacity duration-300 items-center justify-center p-4"
+         aria-modal="true" role="dialog" aria-labelledby="modalTitle">
+
+        <!-- Modal Content Container -->
+        <div class="relative bg-white rounded-xl shadow-2xl w-full max-w-lg mx-auto transform transition-all sm:my-8 sm:align-middle overflow-hidden dark:bg-gray-800">
+
+            <!-- Close Button -->
+            <button id="closeModalButton"
+                    class="absolute top-4 right-4 text-gray-500 hover:text-gray-700 p-1 rounded-full bg-gray-100 transition dark:text-gray-500 dark:hover:text-gray-400 dark:bg-gray-700"
+                    aria-label="Close donation options">
+                <i data-lucide="x" class="w-6 h-6"></i>
+            </button>
+
+            <!-- Modal Header - Uses brand-red -->
+            <div class="p-6 border-b border-gray-200 bg-brand-red rounded-t-xl dark:border-gray-700">
+                <h2 id="modalTitle" class="text-2xl font-bold text-white">Choose Your Donation Method</h2>
+            </div>
+
+            <!-- Modal Body - Options List -->
+            <div class="p-6 space-y-4 max-h-[80vh] modal-content overflow-y-auto">
+
+                <!-- 1. Card (Visa/Mastercard) Option -->
+                <a href="#" class="flex items-center p-4 border border-gray-300 rounded-lg hover:bg-gray-100 transition cursor-pointer group dark:border-gray-700 dark:hover:bg-gray-700">
+                    <i data-lucide="credit-card" class="w-6 h-6 text-brand-red group-hover:text-brand-red mr-4 flex-shrink-0"></i>
+                    <div class="flex-grow">
+                        <p class="text-lg font-semibold text-gray-900 dark:text-gray-200">Credit/Debit Card</p>
+                        <p class="text-sm text-gray-600 dark:text-gray-400">Visa, Mastercard, etc.</p>
+                    </div>
+                    <i data-lucide="chevron-right" class="w-5 h-5 text-gray-500 group-hover:text-gray-700 dark:group-hover:text-gray-300"></i>
+                </a>
+
+                <!-- 2. PayPal Option -->
+                <a href="#" class="flex items-center p-4 border border-gray-300 rounded-lg hover:bg-gray-100 transition cursor-pointer group dark:border-gray-700 dark:hover:bg-gray-700">
+                    <i data-lucide="wallet" class="w-6 h-6 text-brand-red group-hover:text-brand-red mr-4 flex-shrink-0"></i>
+                    <div class="flex-grow">
+                        <p class="text-lg font-semibold text-gray-900 dark:text-gray-200">PayPal</p>
+                            <p class="text-sm text-gray-600 dark:text-gray-400">Secure online payment</p>
+                        </div>
+                    <i data-lucide="chevron-right" class="w-5 h-5 text-gray-500 group-hover:text-gray-700 dark:group-hover:text-gray-300"></i>
+                </a>
+
+                <!-- 3. Mobile Money (Momo) Option -->
+                <div class="p-4 border border-brand-red bg-red-100 rounded-lg shadow-md dark:bg-red-900">
+                    <div class="flex items-start mb-2">
+                        <i data-lucide="smartphone" class="w-6 h-6 text-brand-dark mr-4 flex-shrink-0 mt-0.5 dark:text-gray-300"></i>
+                        <div class="flex-grow">
+                            <p class="text-lg font-semibold text-gray-900 dark:text-gray-200">Mobile Money (Momo)</p>
+                            <p class="text-sm text-gray-600 dark:text-gray-400">Please use the number below to send your donation.</p>
+                        </div>
+                    </div>
+                    <div class="text-center pt-2">
+                        <p class="text-2xl font-extrabold text-brand-red tracking-wider bg-white p-3 rounded-lg border-2 border-red-500 inline-block dark:bg-gray-900 dark:border-red-700 dark:text-white">
+                            +211932464799
+                        </p>
+                        <button onclick="copyToClipboard('+211932464799', this)"
+                                class="mt-3 px-3 py-1 text-sm bg-brand-dark text-white rounded-lg hover:bg-brand-red transition active:bg-brand-red">
+                            Copy Number
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+            
+            <!-- Status Message for Copy Action -->
+            <div id="statusMessage" class="hidden p-3 text-white text-center rounded-b-xl transition duration-300">
+                Copied to clipboard!
+            </div>
+            <div class="p-4 text-center text-sm text-gray-500 border-t border-gray-200 dark:text-gray-400 dark:border-gray-700">
+                All donations are securely processed. Thank you for your support!
+            </div>
+        </div>
+    </div>
+    <!-- End Donation Modal -->
+
+    <!-- Footer -->
+    <footer class="bg-brand-dark text-white py-10">
+        <div class="container mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-8 mb-8">
+                <!-- Site Info -->
+                <div>
+                    <h4 class="text-xl font-bold mb-3 text-brand-red">Voice of Juba</h4>
+                    <p class="text-sm text-gray-400">Delivering reliable and timely news and analysis for South Sudan.</p>
+                </div>
+                <!-- Links 1: Sections -->
+                <div>
+                    <h4 class="text-lg font-semibold mb-3">Sections</h4>
+                    <ul class="space-y-2 text-sm text-gray-400">
+                        <li><a href="#" class="hover:text-brand-red">News</a></li>
+                        <li><a href="#" class="hover:text-brand-red">Shamarat</a></li>
+                        <li><a href="#" class="hover:text-brand-red">Politics</a></li>
+                        <li><a href="#" class="hover:text-brand-red">Spotlight</a></li>
+                    </ul>
+                </div>
+                <!-- Links 2: Policy -->
+                <div>
+                    <h4 class="text-lg font-semibold mb-3">Policy & Legal</h4>
+                    <ul class="space-y-2 text-sm text-gray-400">
+                        <li><a href="#" class="hover:text-brand-red font-bold">Privacy Policy</a></li>
+                        <li><a href="#" class="hover:text-brand-red font-bold">Terms of Use</a></li>
+                        <li><a href="#" class="hover:text-brand-red">Accessibility</a></li>
+                        <li><a href="#" class="hover:text-brand-red">Legal Notice</a></li>
+                    </ul>
+                </div>
+                <!-- Connect -->
+                <div>
+                    <h4 class="text-lg font-semibold mb-3">Company</h4>
+                    <ul class="space-y-2 text-sm text-gray-400">
+                        <li><a href="#" class="hover:text-brand-red">Contact Us</a></li>
+                        <li><a href="#" class="hover:text-brand-red">Advertise With Us</a></li>
+                        <li><a href="#" class="hover:text-brand-red">Careers</a></li>
+                    </ul>
+                    <div class="flex space-x-4 mt-4">
+                        <!-- Social Media Icons (Lucide icons are simple SVGs that adapt) -->
+                        <a href="#" class="text-gray-400 hover:text-brand-red transition duration-150">
+                            <i data-lucide="facebook" class="w-6 h-6"></i>
+                        </a>
+                        <a href="#" class="text-gray-400 hover:text-brand-red transition duration-150">
+                            <i data-lucide="twitter" class="w-6 h-6"></i>
+                        </a>
+                        <a href="#" class="text-gray-400 hover:text-brand-red transition duration-150">
+                            <i data-lucide="youtube" class="w-6 h-6"></i>
+                        </a>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="border-t border-gray-700 pt-6 text-center text-sm text-gray-500">
+                &copy; <span id="year">2024</span> Voice of Juba. All rights reserved.
+            </div>
+        </div>
+    </footer>
+    
+    <script>
+        document.getElementById('year').textContent = new Date().getFullYear();
+    </script>
+</body>
+</html>
+
